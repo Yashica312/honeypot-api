@@ -16,7 +16,7 @@ SCAM_KEYWORDS = [
     "suspended"
 ]
 
-# 🧠 Memory store (in-memory)
+# In-memory session store
 sessions = {}
 
 @app.post("/honeypot")
@@ -24,42 +24,42 @@ async def honeypot_endpoint(
     data: dict,
     x_api_key: str = Header(None)
 ):
-    # 1. API key check
+    # API key check
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
-    # 2. Get sessionId
     session_id = data.get("sessionId", "unknown-session")
 
-    # 3. Initialize session memory if new
+    # Initialize session if new
     if session_id not in sessions:
         sessions[session_id] = {
             "message_count": 0,
             "start_time": time.time()
         }
 
-    # 4. Update memory
+    # Update message count
     sessions[session_id]["message_count"] += 1
     message_count = sessions[session_id]["message_count"]
 
-    # 5. Read message text safely
+    # Read message text
     message = data.get("message", {})
     text = message.get("text", "")
     text_lower = text.lower()
 
-    # 6. Scam detection
+    # Scam detection
     scam_detected = any(word in text_lower for word in SCAM_KEYWORDS)
 
-    # 7. Simple memory-aware reply
+    # PERSONA SWITCHING LOGIC
     if scam_detected:
         if message_count < 3:
-            reply = "I’m not sure what this means, can you explain?"
+            # Persona A: Confused User
+            reply = "I don’t really understand this. Can you explain it clearly?"
         else:
-            reply = "I’m still confused. Why is this happening?"
+            # Persona B: Concerned Helper
+            reply = "I’m helping them with this. Which bank is this from exactly?"
     else:
         reply = "Okay."
 
-    # 8. Response
     return {
         "status": "success",
         "scamDetected": scam_detected,
