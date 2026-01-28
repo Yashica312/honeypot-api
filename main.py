@@ -103,4 +103,7 @@ async def honeypot_endpoint(
             "upiIds": list(session["upiIds"]),
             "phoneNumbers": list(session["phoneNumbers"]),
             "phishingLinks": list(session["phishingLinks"]),
-            "suspiciousKeywords"
+            "suspiciousKeywords": list(session["suspiciousKeywords"])
+        },
+        "reply": reply
+    }
