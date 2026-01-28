@@ -3,6 +3,7 @@ import os
 import time
 import re
 import requests
+import random
 
 app = FastAPI()
 
@@ -17,6 +18,25 @@ SCAM_KEYWORDS = [
     "otp",
     "bank",
     "suspended"
+]
+
+# Reply pools (SAFE, HUMAN, NON-REVEALING)
+CONFUSED_REPLIES = [
+    "I don’t really understand this. Can you explain it clearly?",
+    "Sorry, I’m a bit confused. What exactly do I need to do?",
+    "This isn’t very clear to me. Can you explain again?"
+]
+
+HELPER_REPLIES = [
+    "I’m helping them with this. Which bank is this from exactly?",
+    "Can you confirm the bank name again?",
+    "Why is this urgent exactly?"
+]
+
+EXIT_REPLIES = [
+    "I’ll go to the bank directly tomorrow. Thank you.",
+    "I’ll check this at the bank in person.",
+    "I’ll handle this offline tomorrow. Thanks."
 ]
 
 sessions = {}
@@ -79,21 +99,17 @@ async def honeypot_endpoint(
     if message_count >= 6:
         should_stop = True
 
-    if (
-        session["upiIds"]
-        or session["phoneNumbers"]
-        or session["phishingLinks"]
-    ):
+    if session["upiIds"] or session["phoneNumbers"] or session["phishingLinks"]:
         should_stop = True
 
-    # -------- Persona Reply --------
+    # -------- Reply Selection --------
     if scam_detected and not should_stop:
         if message_count < 3:
-            reply = "I don’t really understand this. Can you explain it clearly?"
+            reply = random.choice(CONFUSED_REPLIES)
         else:
-            reply = "I’m helping them with this. Which bank is this from exactly?"
+            reply = random.choice(HELPER_REPLIES)
     elif should_stop:
-        reply = "I’ll go to the bank directly tomorrow. Thank you."
+        reply = random.choice(EXIT_REPLIES)
     else:
         reply = "Okay."
 
@@ -110,14 +126,14 @@ async def honeypot_endpoint(
                 "phoneNumbers": list(session["phoneNumbers"]),
                 "suspiciousKeywords": list(session["suspiciousKeywords"])
             },
-            "agentNotes": "Scammer used urgency and payment redirection tactics"
+            "agentNotes": "Urgency-based scam with payment redirection"
         }
 
         try:
             requests.post(GUVI_CALLBACK_URL, json=payload, timeout=5)
             session["callback_sent"] = True
         except Exception:
-            pass  # Do not crash even if callback fails
+            pass  # never crash
 
     return {
         "status": "success",
