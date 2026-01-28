@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Header, HTTPException
 import os
 import time
+import re
 
 app = FastAPI()
 
@@ -34,12 +35,18 @@ async def honeypot_endpoint(
     if session_id not in sessions:
         sessions[session_id] = {
             "message_count": 0,
-            "start_time": time.time()
+            "start_time": time.time(),
+            "upiIds": set(),
+            "phoneNumbers": set(),
+            "phishingLinks": set(),
+            "suspiciousKeywords": set()
         }
 
+    session = sessions[session_id]
+
     # Update message count
-    sessions[session_id]["message_count"] += 1
-    message_count = sessions[session_id]["message_count"]
+    session["message_count"] += 1
+    message_count = session["message_count"]
 
     # Read message text
     message = data.get("message", {})
@@ -49,20 +56,51 @@ async def honeypot_endpoint(
     # Scam detection
     scam_detected = any(word in text_lower for word in SCAM_KEYWORDS)
 
-    # PERSONA SWITCHING LOGIC
+    # -------------------------------
+    # 🧠 INTELLIGENCE EXTRACTION
+    # -------------------------------
+
+    # Extract UPI IDs
+    upi_matches = re.findall(r'\b[\w.\-]+@[\w]+\b', text_lower)
+    for upi in upi_matches:
+        if "upi" in upi:
+            session["upiIds"].add(upi)
+
+    # Extract phone numbers (India)
+    phone_matches = re.findall(r'\b(?:\+91)?[6-9]\d{9}\b', text)
+    for phone in phone_matches:
+        session["phoneNumbers"].add(phone)
+
+    # Extract links
+    link_matches = re.findall(r'https?://\S+', text)
+    for link in link_matches:
+        session["phishingLinks"].add(link)
+
+    # Extract suspicious keywords
+    for word in SCAM_KEYWORDS:
+        if word in text_lower:
+            session["suspiciousKeywords"].add(word)
+
+    # -------------------------------
+    # PERSONA SWITCHING (Day 5)
+    # -------------------------------
     if scam_detected:
         if message_count < 3:
-            # Persona A: Confused User
             reply = "I don’t really understand this. Can you explain it clearly?"
         else:
-            # Persona B: Concerned Helper
             reply = "I’m helping them with this. Which bank is this from exactly?"
     else:
         reply = "Okay."
 
+    # -------------------------------
+    # Response (convert sets to lists)
+    # -------------------------------
     return {
         "status": "success",
         "scamDetected": scam_detected,
         "messageCount": message_count,
-        "reply": reply
-    }
+        "extractedIntelligence": {
+            "upiIds": list(session["upiIds"]),
+            "phoneNumbers": list(session["phoneNumbers"]),
+            "phishingLinks": list(session["phishingLinks"]),
+            "suspiciousKeywords"
