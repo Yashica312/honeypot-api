@@ -22,21 +22,29 @@ SCAM_KEYWORDS = [
 
 # Reply pools (SAFE, HUMAN, NON-REVEALING)
 CONFUSED_REPLIES = [
-    "I don’t really understand this. Can you explain it clearly?",
-    "Sorry, I’m a bit confused. What exactly do I need to do?",
-    "This isn’t very clear to me. Can you explain again?"
+   "I’m not sure I understand this. Can you explain what’s going on?",
+    "Sorry, this is a bit confusing for me. What exactly happened?",
+    "I don’t really get it. What do I need to do now?",
+    "Can you explain this once more? I’m not very familiar with these things.",
+    "I’m confused. Why is this happening suddenly?",
+    "I don’t remember doing anything wrong. Can you clarify?"
 ]
 
 HELPER_REPLIES = [
-    "I’m helping them with this. Which bank is this from exactly?",
-    "Can you confirm the bank name again?",
-    "Why is this urgent exactly?"
+    "I’m helping them with this. Which bank is this related to?",
+    "Can you confirm the bank name again so we’re sure?",
+    "Why is this urgent exactly? What happens if we wait?",
+    "I need to understand this clearly before proceeding. Which account is affected?",
+    "Can you explain the issue in detail?",
+    "What is the exact problem you are seeing from your side?"
 ]
 
 EXIT_REPLIES = [
-    "I’ll go to the bank directly tomorrow. Thank you.",
-    "I’ll check this at the bank in person.",
-    "I’ll handle this offline tomorrow. Thanks."
+    ""I’ll visit the bank directly tomorrow and sort this out.",
+    "I’ll check this with the bank in person. Thanks.",
+    "I’ll handle this offline tomorrow.",
+    "I’m going to verify this directly at the bank.",
+    "I’ll get this checked tomorrow. Thank you."
 ]
 
 sessions = {}
@@ -142,3 +150,4 @@ async def honeypot_endpoint(
         "engagementEnded": should_stop,
         "reply": reply
     }
+
