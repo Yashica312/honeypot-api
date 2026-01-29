@@ -40,7 +40,7 @@ HELPER_REPLIES = [
 ]
 
 EXIT_REPLIES = [
-    ""I’ll visit the bank directly tomorrow and sort this out.",
+    "I’ll visit the bank directly tomorrow and sort this out.",
     "I’ll check this with the bank in person. Thanks.",
     "I’ll handle this offline tomorrow.",
     "I’m going to verify this directly at the bank.",
@@ -150,4 +150,5 @@ async def honeypot_endpoint(
         "engagementEnded": should_stop,
         "reply": reply
     }
+
 
