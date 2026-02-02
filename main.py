@@ -36,15 +36,13 @@ EXIT_REPLIES = [
 
 sessions = {}
 
-def safe_success():
-    return {"status": "success"}
-
-async def process(request: Request, x_api_key: str | None):
-    # If tester sends no API key, DO NOT FAIL
+# ---------- CORE HANDLER ----------
+async def process_request(request: Request, x_api_key: str | None):
+    # If API key is present, validate it
     if x_api_key and x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
-    # Try reading JSON, ignore failures
+    # Safe body read
     try:
         data = await request.json()
         if not isinstance(data, dict):
@@ -62,36 +60,41 @@ async def process(request: Request, x_api_key: str | None):
     sessions[session_id]["count"] += 1
     count = sessions[session_id]["count"]
 
-    scam = any(k in text for k in SCAM_KEYWORDS)
+    scam_detected = any(k in text for k in SCAM_KEYWORDS)
 
-    if scam and count < 3:
+    if scam_detected and count < 3:
         reply = random.choice(CONFUSED_REPLIES)
-    elif scam:
+    elif scam_detected:
         reply = random.choice(HELPER_REPLIES)
     else:
         reply = "Okay."
 
     return {
         "status": "success",
-        "scamDetected": scam,
+        "scamDetected": scam_detected,
         "messageCount": count,
         "reply": reply
     }
 
-# 🔥 GET HANDLERS (THIS IS THE KEY)
-@app.get("/")
-async def root_get():
-    return safe_success()
+# ---------- ENDPOINTS ----------
+@app.post("/honeypot")
+async def honeypot_post(request: Request, x_api_key: str | None = Header(None)):
+    return await process_request(request, x_api_key)
+
+@app.post("/")
+async def root_post(request: Request, x_api_key: str | None = Header(None)):
+    return await process_request(request, x_api_key)
 
 @app.get("/honeypot")
 async def honeypot_get():
-    return safe_success()
+    return {
+        "status": "success",
+        "scamDetected": False
+    }
 
-# 🔥 POST HANDLERS
-@app.post("/")
-async def root_post(request: Request, x_api_key: str | None = Header(None)):
-    return await process(request, x_api_key)
-
-@app.post("/honeypot")
-async def honeypot_post(request: Request, x_api_key: str | None = Header(None)):
-    return await process(request, x_api_key)
+@app.get("/")
+async def root_get():
+    return {
+        "status": "success",
+        "scamDetected": False
+    }
