@@ -50,10 +50,13 @@ EXIT_REPLIES = [
 sessions = {}
 
 @app.post("/honeypot")
+from fastapi import Body
+
 async def honeypot_endpoint(
-    data: dict,
+    data: dict = Body(default={}),
     x_api_key: str = Header(None)
 ):
+
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
@@ -75,6 +78,8 @@ async def honeypot_endpoint(
     message_count = session["message_count"]
 
     message = data.get("message", {})
+    if not isinstance(message, dict):
+        message = {}
     text = message.get("text", "")
     text_lower = text.lower()
 
@@ -150,5 +155,6 @@ async def honeypot_endpoint(
         "engagementEnded": should_stop,
         "reply": reply
     }
+
 
 
