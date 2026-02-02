@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Header, HTTPException, Body
+from fastapi import FastAPI, Header, HTTPException, Request
 import os
 import time
 import re
@@ -53,15 +53,19 @@ sessions = {}
 # ================= ENDPOINT =================
 @app.post("/honeypot")
 async def honeypot_endpoint(
-    data: dict = Body(default={}),
+    request: Request,
     x_api_key: str = Header(None)
 ):
     # ---- Auth check ----
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
-    # ---- Safe input handling (tester-proof) ----
-    if not isinstance(data, dict):
+    # ---- Safely read body (TESTER-PROOF) ----
+    try:
+        data = await request.json()
+        if not isinstance(data, dict):
+            data = {}
+    except Exception:
         data = {}
 
     session_id = data.get("sessionId", "unknown-session")
@@ -155,7 +159,6 @@ async def honeypot_endpoint(
         except Exception:
             pass  # never crash
 
-    # ---- Final response ----
     return {
         "status": "success",
         "scamDetected": scam_detected,
