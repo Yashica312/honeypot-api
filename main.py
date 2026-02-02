@@ -18,49 +18,54 @@ SCAM_KEYWORDS = [
     "upi",
     "otp",
     "bank",
-    "suspended"
+    "suspended",
+    "freeze",
+    "login",
+    "security alert"
 ]
 
+# -------- NATURAL REPLY POOLS --------
 CONFUSED_REPLIES = [
-    "What is this? I don’t understand.",
+    "What is this message?",
     "Why is my account blocked?",
-    "I didn’t do anything. What happened?",
-    "I’m confused, what should I do now?",
-    "This message is not clear to me.",
-    "Why am I getting this message suddenly?"
+    "I don’t understand this.",
+    "I didn’t do anything wrong.",
+    "This is confusing. What happened?",
+    "Why am I getting this now?",
+    "Can you explain what this is about?",
+    "I’m not sure what this means."
 ]
 
 HELPER_REPLIES = [
     "I’m helping them with this. Which bank is this?",
-    "Can you tell clearly which account this is about?",
+    "Which account are you talking about?",
     "Why is this urgent?",
-    "What exactly is the issue here?",
+    "Can you explain the issue properly?",
     "Which bank are you calling from?",
-    "Please explain the problem properly."
+    "What exactly is the problem?",
+    "Can you tell clearly what needs to be done?",
+    "Why was this account flagged?"
 ]
 
 EXIT_REPLIES = [
     "Okay, I’ll go to the bank tomorrow.",
-    "I’ll check this at the bank directly.",
+    "I’ll check this directly at the bank.",
     "I’ll handle this by visiting the bank.",
-    "I’ll see this tomorrow at the bank.",
-    "Let me go to the bank and check."
+    "I’ll sort this out at the bank.",
+    "I’ll verify this in person tomorrow.",
+    "Let me go to the bank and check.",
+    "I’ll deal with this offline."
 ]
 
 # ================= MEMORY =================
 sessions = {}
 
-# ================= ENDPOINT =================
-@app.post("/honeypot")
-async def honeypot_endpoint(
-    request: Request,
-    x_api_key: str = Header(None)
-):
-    # ---- Auth check ----
+# ================= CORE HANDLER =================
+async def handle_request(request: Request, x_api_key: str):
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
-    # ---- Safely read body (TESTER-PROOF) ----
+    # --- Ultra-safe body handling (tester-proof) ---
     try:
         data = await request.json()
         if not isinstance(data, dict):
@@ -68,7 +73,7 @@ async def honeypot_endpoint(
     except Exception:
         data = {}
 
-    session_id = data.get("sessionId", "unknown-session")
+    session_id = data.get("sessionId", "tester-session")
 
     message = data.get("message", {})
     if not isinstance(message, dict):
@@ -77,15 +82,13 @@ async def honeypot_endpoint(
     text = str(message.get("text", ""))
     text_lower = text.lower()
 
-    # ---- Init session ----
+    # --- Init session ---
     if session_id not in sessions:
         sessions[session_id] = {
             "message_count": 0,
-            "start_time": time.time(),
             "upiIds": set(),
             "phoneNumbers": set(),
             "phishingLinks": set(),
-            "suspiciousKeywords": set(),
             "callback_sent": False
         }
 
@@ -93,40 +96,30 @@ async def honeypot_endpoint(
     session["message_count"] += 1
     message_count = session["message_count"]
 
-    # ---- Scam detection ----
-    scam_detected = any(word in text_lower for word in SCAM_KEYWORDS)
+    # --- Scam detection ---
+    scam_detected = any(k in text_lower for k in SCAM_KEYWORDS)
 
-    # ---- Intelligence extraction ----
-    upi_matches = re.findall(r'\b[\w.\-]+@[\w]+\b', text_lower)
-    for upi in upi_matches:
+    # --- Intelligence extraction ---
+    for upi in re.findall(r'\b[\w.\-]+@[\w]+\b', text_lower):
         if "upi" in upi:
             session["upiIds"].add(upi)
 
-    phone_matches = re.findall(r'\b(?:\+91)?[6-9]\d{9}\b', text)
-    for phone in phone_matches:
+    for phone in re.findall(r'\b(?:\+91)?[6-9]\d{9}\b', text):
         session["phoneNumbers"].add(phone)
 
-    link_matches = re.findall(r'https?://\S+', text)
-    for link in link_matches:
+    for link in re.findall(r'https?://\S+', text):
         session["phishingLinks"].add(link)
 
-    for word in SCAM_KEYWORDS:
-        if word in text_lower:
-            session["suspiciousKeywords"].add(word)
+    # --- Stop logic ---
+    should_stop = (
+        message_count >= 6
+        or "otp" in text_lower
+        or session["upiIds"]
+        or session["phoneNumbers"]
+        or session["phishingLinks"]
+    )
 
-    # ---- Stop logic ----
-    should_stop = False
-
-    if "otp" in text_lower or "send money" in text_lower:
-        should_stop = True
-
-    if message_count >= 6:
-        should_stop = True
-
-    if session["upiIds"] or session["phoneNumbers"] or session["phishingLinks"]:
-        should_stop = True
-
-    # ---- Reply selection ----
+    # --- Reply selection ---
     if scam_detected and not should_stop:
         if message_count < 3:
             reply = random.choice(CONFUSED_REPLIES)
@@ -137,24 +130,26 @@ async def honeypot_endpoint(
     else:
         reply = "Okay."
 
-    # ---- Mandatory callback ----
+    # --- Mandatory callback (safe, once) ---
     if should_stop and not session["callback_sent"]:
-        payload = {
-            "sessionId": session_id,
-            "scamDetected": scam_detected,
-            "totalMessagesExchanged": message_count,
-            "extractedIntelligence": {
-                "bankAccounts": [],
-                "upiIds": list(session["upiIds"]),
-                "phishingLinks": list(session["phishingLinks"]),
-                "phoneNumbers": list(session["phoneNumbers"]),
-                "suspiciousKeywords": list(session["suspiciousKeywords"])
-            },
-            "agentNotes": "Urgency-based scam with payment redirection"
-        }
-
         try:
-            requests.post(GUVI_CALLBACK_URL, json=payload, timeout=5)
+            requests.post(
+                GUVI_CALLBACK_URL,
+                json={
+                    "sessionId": session_id,
+                    "scamDetected": scam_detected,
+                    "totalMessagesExchanged": message_count,
+                    "extractedIntelligence": {
+                        "bankAccounts": [],
+                        "upiIds": list(session["upiIds"]),
+                        "phishingLinks": list(session["phishingLinks"]),
+                        "phoneNumbers": list(session["phoneNumbers"]),
+                        "suspiciousKeywords": []
+                    },
+                    "agentNotes": "Urgency-based scam interaction"
+                },
+                timeout=5
+            )
             session["callback_sent"] = True
         except Exception:
             pass  # never crash
@@ -166,3 +161,12 @@ async def honeypot_endpoint(
         "engagementEnded": should_stop,
         "reply": reply
     }
+
+# ================= ENDPOINTS =================
+@app.post("/")
+async def root_endpoint(request: Request, x_api_key: str = Header(None)):
+    return await handle_request(request, x_api_key)
+
+@app.post("/honeypot")
+async def honeypot_endpoint(request: Request, x_api_key: str = Header(None)):
+    return await handle_request(request, x_api_key)
