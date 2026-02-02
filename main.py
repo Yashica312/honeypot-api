@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Body
 import os
 import time
 import re
@@ -50,12 +50,11 @@ EXIT_REPLIES = [
 sessions = {}
 
 @app.post("/honeypot")
-from fastapi import Body
-
 async def honeypot_endpoint(
     data: dict = Body(default={}),
     x_api_key: str = Header(None)
 ):
+:
 
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
@@ -155,6 +154,7 @@ async def honeypot_endpoint(
         "engagementEnded": should_stop,
         "reply": reply
     }
+
 
 
 
