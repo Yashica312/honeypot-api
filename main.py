@@ -6,15 +6,14 @@ app = FastAPI()
 
 API_KEY = os.getenv("API_KEY", "mysecretkey")
 
-# --- 1. CONFIGURATION ---
-# Simple substring checks (No complex Regex to prevent crashes)
+# 1. SMARTER KEYWORDS
+# We added spaces around words like " upi " so "cupid" doesn't trigger it.
 SCAM_KEYWORDS = [
-    "account", "blocked", "verify", "urgent", "upi", "otp", "bank", 
-    "suspended", "click", "link", "reward", "winner", "kyc", "refund", "credit"
+    "account", "blocked", "verify", "urgent", " upi ", " otp ", "bank", 
+    "suspended", "click", "link", "reward", "winner"
 ]
 
-# --- 2. PERSONA: The "Confused Grandpa" ---
-# Phase 1: Confusion
+# 2. THE GRANDPA PERSONA (Creative Replies)
 CONFUSED_REPLIES = [
     "Hello? My grandson usually handles the computer.",
     "I received a message about my bank. Is this the manager?",
@@ -23,26 +22,12 @@ CONFUSED_REPLIES = [
     "Is my money safe? I am very worried."
 ]
 
-# Phase 2: Baiting (Pretending to help)
 HELPER_REPLIES = [
-    "Okay, I found my card. What numbers do you need?",
+    "Okay, I want to fix this. Which specific account is it?",
     "My son told me never to share the OTP, but I am scared.",
     "Do I need to come to the branch? Or can I do it here?",
     "I am trying to find the app. Which one do I download?",
     "Can you send the link again? My fingers are shaky."
-]
-
-# Special Replies for Specific Triggers
-OTP_REPLIES = [
-    "I see a code... is it 8-4-2... wait, it disappeared.",
-    "The message says 'Do Not Share'. Should I still give it to you?",
-    "I can't read the number, it's too small on this screen."
-]
-
-LINK_REPLIES = [
-    "I clicked the blue text but it says 'Page Not Found'.",
-    "Nothing is happening when I touch the link.",
-    "My internet is very slow, do I need to download something?"
 ]
 
 sessions = {}
@@ -51,11 +36,10 @@ def safe_success():
     return {"status": "success"}
 
 async def process(request: Request, x_api_key: str | None):
-    # --- SAFETY CHECK ---
+    # --- SAFETY CHECK: Same as the working code ---
     if x_api_key and x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
-    # --- CRASH-PROOF PARSING ---
     try:
         body_bytes = await request.body()
         if not body_bytes:
@@ -83,25 +67,13 @@ async def process(request: Request, x_api_key: str | None):
     sessions[session_id]["count"] += 1
     count = sessions[session_id]["count"]
 
-    # --- LOGIC (Safe & Smart) ---
+    # Simple logic
     scam = any(k in text for k in SCAM_KEYWORDS)
 
-    if scam:
-        # 1. Check for Context (OTP vs Link vs General)
-        if "otp" in text or "code" in text:
-            reply = random.choice(OTP_REPLIES)
-        elif "link" in text or "http" in text or "click" in text:
-            reply = random.choice(LINK_REPLIES)
-        # 2. Progression (Confused -> Helping)
-        elif count < 3:
-            reply = random.choice(CONFUSED_REPLIES)
-        else:
-            reply = random.choice(HELPER_REPLIES)
-            
-        # --- FAKE REPORTING (For the Logs) ---
-        # This will show up in Render Logs and looks impressive to judges
-        print(f"🚨 [SCAM DETECTED] Session: {session_id} | Trigger: {text[:20]}... | Reply: {reply}")
-        
+    if scam and count < 3:
+        reply = random.choice(CONFUSED_REPLIES)
+    elif scam:
+        reply = random.choice(HELPER_REPLIES)
     else:
         reply = "Okay."
 
