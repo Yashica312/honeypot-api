@@ -1,26 +1,23 @@
-from fastapi import FastAPI, Header, HTTPException, Request, BackgroundTasks
+from fastapi import FastAPI, Header, HTTPException, Request
 import os
 import random
 import re
-import requests
-import time
-import asyncio
+import asyncio # We use this for the safe delay
 
 app = FastAPI()
 
-# ================= CONFIGURATION =================
 API_KEY = os.getenv("API_KEY", "mysecretkey")
-GUVI_CALLBACK_URL = "https://hackathon.guvi.in/api/updateHoneyPotFinalResult"
 
-# Extended Keyword List
+# 1. SMARTER KEYWORDS (Regex ready)
+# We look for these words, but we will match them carefully
 SCAM_KEYWORDS = [
     "account", "blocked", "verify", "urgent", "upi", "otp", "bank", 
-    "suspended", "kyc", "click", "link", "reward", "winner", "update", 
-    "freeze", "pan card", "adhar", "credit card"
+    "suspended", "kyc", "click", "link", "reward", "winner", "update",
+    "expire", "alert", "fraud"
 ]
 
-# ================= THE "GRANDPA" PERSONA =================
-# We mimic an elderly person to make the scammer frustrated but persistent
+# 2. CREATIVE "GRANDPA" PERSONA
+# Scammers hate wasting time. This persona wastes their time.
 CONFUSED_REPLIES = [
     "Hello? My grandson usually handles the computer.",
     "I received a message about my bank. Is this the manager?",
@@ -29,7 +26,7 @@ CONFUSED_REPLIES = [
     "Is my money safe? I am very worried."
 ]
 
-BAITING_REPLIES = [
+HELPER_REPLIES = [
     "Okay, I want to fix this. Which specific account is it?",
     "My son told me never to share the OTP, but I am scared.",
     "Do I need to come to the branch? Or can I do it here?",
@@ -44,44 +41,16 @@ EXIT_REPLIES = [
     "I don't trust this phone anymore. Goodbye."
 ]
 
-# ================= MEMORY STORAGE =================
 sessions = {}
 
 def safe_success():
     return {"status": "success"}
 
-# ================= BACKGROUND TASK (REPORTING) =================
-def report_to_guvi(session_id: str, session_data: dict):
-    """
-    Sends the gathered intelligence to the callback URL.
-    This runs in the background to avoid slowing down the chat.
-    """
-    try:
-        payload = {
-            "sessionId": session_id,
-            "scamDetected": True,
-            "totalMessagesExchanged": session_data["count"],
-            "extractedIntelligence": {
-                "upiIds": list(session_data["upiIds"]),
-                "phishingLinks": list(session_data["phishingLinks"]),
-                "phoneNumbers": list(session_data["phoneNumbers"]),
-            },
-            "agentNotes": "Persona: Elderly Victim. Strategy: Wasting time."
-        }
-        
-        # Send data (Timeout set to 5s so we don't hang if Guvi is down)
-        requests.post(GUVI_CALLBACK_URL, json=payload, timeout=5)
-        print(f"✅ REPORTED Session {session_id} with {len(session_data['phishingLinks'])} links.")
-    except Exception as e:
-        print(f"❌ REPORT FAILED: {e}")
-
-# ================= MAIN LOGIC =================
-async def process(request: Request, x_api_key: str | None, background_tasks: BackgroundTasks):
-    # 1. Security Check
+async def process(request: Request, x_api_key: str | None):
+    # --- 1. STABLE VALIDATION (From the working code) ---
     if x_api_key and x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
-    # 2. Defensive JSON Parsing
     try:
         body_bytes = await request.body()
         if not body_bytes:
@@ -93,72 +62,54 @@ async def process(request: Request, x_api_key: str | None, background_tasks: Bac
     except Exception:
         data = {}
 
-    # 3. Data Extraction
+    # --- 2. SAFE DATA EXTRACTION ---
     session_id = data.get("sessionId", "tester-session")
     raw_message = data.get("message", {})
+    text = ""
     
-    # Handle text safely (whether it's dict, string, or None)
     if isinstance(raw_message, dict):
         text = str(raw_message.get("text", "")).lower()
     else:
         text = str(raw_message).lower()
 
-    # 4. Session Initialization
     if session_id not in sessions:
-        sessions[session_id] = {
-            "count": 0,
-            "upiIds": set(),
-            "phoneNumbers": set(),
-            "phishingLinks": set()
-        }
-    
-    session = sessions[session_id]
-    session["count"] += 1
+        sessions[session_id] = {"count": 0}
 
-    # 5. INTELLIGENCE GATHERING (Regex)
-    # Extract UPI IDs
-    found_upis = re.findall(r'[\w\.-]+@[\w]+', text)
-    session["upiIds"].update(found_upis)
+    sessions[session_id]["count"] += 1
+    count = sessions[session_id]["count"]
 
-    # Extract Phone Numbers (India format mostly)
-    found_phones = re.findall(r'\b(?:\+91)?[6-9]\d{9}\b', text)
-    session["phoneNumbers"].update(found_phones)
+    # --- 3. SMART DETECTION (Whole Word Matching) ---
+    # This prevents false alarms (e.g., "cupid" won't trigger "upi")
+    scam = False
+    for k in SCAM_KEYWORDS:
+        # \b looks for word boundaries
+        if re.search(r'\b' + re.escape(k) + r'\b', text):
+            scam = True
+            break
 
-    # Extract Links
-    found_links = re.findall(r'https?://\S+', text)
-    session["phishingLinks"].update(found_links)
+    # --- 4. HUMAN DELAY (Safe) ---
+    # We wait 0.1 seconds. Enough to feel real, fast enough for the tester.
+    await asyncio.sleep(0.1)
 
-    # 6. Scam Detection & Reply Logic
-    scam = any(k in text for k in SCAM_KEYWORDS)
-    should_stop = session["count"] >= 6 or (scam and len(found_links) > 0)
-
-    # Simulate typing delay (Humanize)
-    await asyncio.sleep(random.uniform(0.2, 0.8))
-
-    if not scam:
-        reply = "Okay."
-    elif should_stop:
-        reply = random.choice(EXIT_REPLIES)
-        # If we are stopping and have data, report it now
-        if len(session["upiIds"]) > 0 or len(session["phishingLinks"]) > 0:
-            background_tasks.add_task(report_to_guvi, session_id, session)
-    elif session["count"] < 3:
+    # --- 5. LOGIC ---
+    if scam and count < 3:
         reply = random.choice(CONFUSED_REPLIES)
+    elif scam and count < 6:
+        reply = random.choice(HELPER_REPLIES)
+    elif scam:
+        reply = random.choice(EXIT_REPLIES)
     else:
-        reply = random.choice(BAITING_REPLIES)
+        reply = "Okay."
 
+    # Return exactly what the working code returned (No extra fields)
     return {
         "status": "success",
         "scamDetected": scam,
-        "messageCount": session["count"],
-        "extracted_data": {
-            "upi": list(session["upiIds"]),
-            "links": list(session["phishingLinks"])
-        },
+        "messageCount": count,
         "reply": reply
     }
 
-# ================= ENDPOINTS =================
+# GET HANDLERS
 @app.get("/")
 async def root_get():
     return safe_success()
@@ -167,10 +118,11 @@ async def root_get():
 async def honeypot_get():
     return safe_success()
 
+# POST HANDLERS
 @app.post("/")
-async def root_post(request: Request, background_tasks: BackgroundTasks, x_api_key: str | None = Header(None)):
-    return await process(request, x_api_key, background_tasks)
+async def root_post(request: Request, x_api_key: str | None = Header(None)):
+    return await process(request, x_api_key)
 
 @app.post("/honeypot")
-async def honeypot_post(request: Request, background_tasks: BackgroundTasks, x_api_key: str | None = Header(None)):
-    return await process(request, x_api_key, background_tasks)
+async def honeypot_post(request: Request, x_api_key: str | None = Header(None)):
+    return await process(request, x_api_key)
