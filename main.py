@@ -1,23 +1,19 @@
 from fastapi import FastAPI, Header, HTTPException, Request
 import os
 import random
-import re
-import asyncio # We use this for the safe delay
 
 app = FastAPI()
 
 API_KEY = os.getenv("API_KEY", "mysecretkey")
 
-# 1. SMARTER KEYWORDS (Regex ready)
-# We look for these words, but we will match them carefully
+# 1. SMARTER KEYWORDS
+# We added spaces around words like " upi " so "cupid" doesn't trigger it.
 SCAM_KEYWORDS = [
-    "account", "blocked", "verify", "urgent", "upi", "otp", "bank", 
-    "suspended", "kyc", "click", "link", "reward", "winner", "update",
-    "expire", "alert", "fraud"
+    "account", "blocked", "verify", "urgent", " upi ", " otp ", "bank", 
+    "suspended", "click", "link", "reward", "winner"
 ]
 
-# 2. CREATIVE "GRANDPA" PERSONA
-# Scammers hate wasting time. This persona wastes their time.
+# 2. THE GRANDPA PERSONA (Creative Replies)
 CONFUSED_REPLIES = [
     "Hello? My grandson usually handles the computer.",
     "I received a message about my bank. Is this the manager?",
@@ -34,20 +30,13 @@ HELPER_REPLIES = [
     "Can you send the link again? My fingers are shaky."
 ]
 
-EXIT_REPLIES = [
-    "This is too complicated. I will walk to the bank tomorrow.",
-    "My son just walked in, let me ask him.",
-    "I am going to the police station to ask about this.",
-    "I don't trust this phone anymore. Goodbye."
-]
-
 sessions = {}
 
 def safe_success():
     return {"status": "success"}
 
 async def process(request: Request, x_api_key: str | None):
-    # --- 1. STABLE VALIDATION (From the working code) ---
+    # --- SAFETY CHECK: Same as the working code ---
     if x_api_key and x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
@@ -62,11 +51,11 @@ async def process(request: Request, x_api_key: str | None):
     except Exception:
         data = {}
 
-    # --- 2. SAFE DATA EXTRACTION ---
     session_id = data.get("sessionId", "tester-session")
+    
+    # Handle message safely
     raw_message = data.get("message", {})
     text = ""
-    
     if isinstance(raw_message, dict):
         text = str(raw_message.get("text", "")).lower()
     else:
@@ -78,30 +67,16 @@ async def process(request: Request, x_api_key: str | None):
     sessions[session_id]["count"] += 1
     count = sessions[session_id]["count"]
 
-    # --- 3. SMART DETECTION (Whole Word Matching) ---
-    # This prevents false alarms (e.g., "cupid" won't trigger "upi")
-    scam = False
-    for k in SCAM_KEYWORDS:
-        # \b looks for word boundaries
-        if re.search(r'\b' + re.escape(k) + r'\b', text):
-            scam = True
-            break
+    # Simple logic
+    scam = any(k in text for k in SCAM_KEYWORDS)
 
-    # --- 4. HUMAN DELAY (Safe) ---
-    # We wait 0.1 seconds. Enough to feel real, fast enough for the tester.
-    await asyncio.sleep(0.1)
-
-    # --- 5. LOGIC ---
     if scam and count < 3:
         reply = random.choice(CONFUSED_REPLIES)
-    elif scam and count < 6:
-        reply = random.choice(HELPER_REPLIES)
     elif scam:
-        reply = random.choice(EXIT_REPLIES)
+        reply = random.choice(HELPER_REPLIES)
     else:
         reply = "Okay."
 
-    # Return exactly what the working code returned (No extra fields)
     return {
         "status": "success",
         "scamDetected": scam,
