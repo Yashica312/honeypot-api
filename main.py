@@ -2,17 +2,17 @@ from fastapi import FastAPI, Header, HTTPException, Request, BackgroundTasks
 import os
 import random
 import re
-import requests # We are keeping this!
+import requests
 
 app = FastAPI()
 
 API_KEY = os.getenv("API_KEY", "mysecretkey")
 GUVI_CALLBACK_URL = "https://hackathon.guvi.in/api/updateHoneyPotFinalResult"
 
-# --- 1. SMART PATTERNS ---
+# --- SMART KEYWORDS (REGEX) ---
 SCAM_REGEX = r"\b(account|blocked|verify|urgent|upi|otp|bank|suspended|click|link|reward|winner|kyc|alert)\b"
 
-# --- 2. GRANDPA PERSONA ---
+# --- PERSONA REPLIES ---
 CONFUSED_REPLIES = [
     "Hello? My grandson usually handles the computer.",
     "I received a message about my bank. Is this the manager?",
@@ -41,40 +41,39 @@ sessions = {}
 def safe_success():
     return {"status": "success"}
 
-# --- 3. BACKGROUND REPORTER (The Secret Weapon) ---
-def send_report_safely(session_id, count, captured_data):
+# --- SAFE REPORTING FUNCTION ---
+def report_background(session_id, count, scam_detected, text):
     """
-    Sends data to Guvi in the background. 
-    Wrapped in try/except so it NEVER crashes your app.
+    This runs in the background. It attempts to send data to Guvi.
+    It has a strict timeout and catches ALL errors so the main app never crashes.
     """
     try:
-        payload = {
-            "sessionId": session_id,
-            "scamDetected": True,
-            "messageCount": count,
-            "captured_data": captured_data,
-            "bot_strategy": "Grandpa_Persona"
-        }
-        # Timeout is 2s. If Guvi is slow, we give up silently.
-        requests.post(GUVI_CALLBACK_URL, json=payload, timeout=2)
+        # Simple extraction
+        upi_list = re.findall(r'[\w\.-]+@[\w]+', text)
+        link_list = re.findall(r'https?://\S+', text)
+        
+        # Only report if there is something interesting or it's a scam
+        if scam_detected or upi_list or link_list:
+            payload = {
+                "sessionId": session_id,
+                "scamDetected": scam_detected,
+                "messageCount": count,
+                "extracted_upi": upi_list,
+                "extracted_links": link_list
+            }
+            # TIMEOUT=1 is critical. Do not wait longer than 1 second.
+            requests.post(GUVI_CALLBACK_URL, json=payload, timeout=1)
     except Exception:
-        # If this fails, WE DO NOT CARE. The user already got their reply.
-        pass 
+        # If anything fails (timeout, network error), we ignore it safely.
+        pass
 
-# --- 4. HUMAN TYPOS ---
-def humanize_text(text):
-    if random.random() < 0.3 and len(text) > 5:
-        chars = list(text)
-        idx = random.randint(0, len(chars) - 2)
-        chars[idx], chars[idx+1] = chars[idx+1], chars[idx]
-        return "".join(chars)
-    return text
-
+# --- MAIN LOGIC ---
 async def process(request: Request, background_tasks: BackgroundTasks, x_api_key: str | None):
-    # --- STABILITY LAYER ---
+    # 1. API Key Check
     if x_api_key and x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
+    # 2. Robust Body Parsing (Fixes "Invalid Request Body")
     try:
         body_bytes = await request.body()
         if not body_bytes:
@@ -86,6 +85,7 @@ async def process(request: Request, background_tasks: BackgroundTasks, x_api_key
     except Exception:
         data = {}
 
+    # 3. Safe Data Access
     session_id = data.get("sessionId", "tester-session")
     raw_message = data.get("message", {})
     
@@ -95,43 +95,28 @@ async def process(request: Request, background_tasks: BackgroundTasks, x_api_key
     else:
         text = str(raw_message).lower()
 
+    # 4. Session Tracking
     if session_id not in sessions:
         sessions[session_id] = {"count": 0}
-
     sessions[session_id]["count"] += 1
     count = sessions[session_id]["count"]
 
-    # --- INTELLIGENCE LAYER ---
+    # 5. Scam Logic
     scam = bool(re.search(SCAM_REGEX, text))
 
-    # Steal Data (If any)
-    captured_data = {
-        "upi": re.findall(r'[\w\.-]+@[\w]+', text),
-        "links": re.findall(r'https?://\S+', text)
-    }
-
-    # Contextual Replies
     if scam:
-        if "otp" in text:
-            reply = "I see a code but I cannot read it clearly. Is it 5 digits?"
-        elif "link" in text or "http" in text:
-            reply = "I clicked the blue text but it says Page Not Found."
-        elif count < 3:
+        if count < 3:
             reply = random.choice(CONFUSED_REPLIES)
         elif count < 6:
             reply = random.choice(HELPER_REPLIES)
         else:
             reply = random.choice(EXIT_REPLIES)
-        
-        reply = humanize_text(reply)
-        
-        # --- REPORT IN BACKGROUND ---
-        # Only report if we found scam data or it's a scam message
-        if captured_data['upi'] or captured_data['links'] or count > 2:
-            background_tasks.add_task(send_report_safely, session_id, count, captured_data)
-            
     else:
         reply = "Okay."
+
+    # 6. Background Task (The "Requests" part)
+    # We add this to the queue. It runs AFTER we return the response.
+    background_tasks.add_task(report_background, session_id, count, scam, text)
 
     return {
         "status": "success",
@@ -140,7 +125,7 @@ async def process(request: Request, background_tasks: BackgroundTasks, x_api_key
         "reply": reply
     }
 
-# HANDLERS (With BackgroundTasks support)
+# --- ROUTES ---
 @app.get("/")
 async def root_get():
     return safe_success()
