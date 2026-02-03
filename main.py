@@ -1,18 +1,17 @@
-from fastapi import FastAPI, Header, HTTPException, Request, BackgroundTasks
+from fastapi import FastAPI, Header, HTTPException, Request
 import os
 import random
 import re
-import requests
 
 app = FastAPI()
 
 API_KEY = os.getenv("API_KEY", "mysecretkey")
-GUVI_CALLBACK_URL = "https://hackathon.guvi.in/api/updateHoneyPotFinalResult"
 
 # --- SMART KEYWORDS (REGEX) ---
+# Detects whole words like "bank" but ignores "bankrupt" or "banking" if needed.
 SCAM_REGEX = r"\b(account|blocked|verify|urgent|upi|otp|bank|suspended|click|link|reward|winner|kyc|alert)\b"
 
-# --- PERSONA REPLIES ---
+# --- PERSONA: THE CONFUSED GRANDPA ---
 CONFUSED_REPLIES = [
     "Hello? My grandson usually handles the computer.",
     "I received a message about my bank. Is this the manager?",
@@ -41,39 +40,23 @@ sessions = {}
 def safe_success():
     return {"status": "success"}
 
-# --- SAFE REPORTING FUNCTION ---
-def report_background(session_id, count, scam_detected, text):
-    """
-    This runs in the background. It attempts to send data to Guvi.
-    It has a strict timeout and catches ALL errors so the main app never crashes.
-    """
-    try:
-        # Simple extraction
-        upi_list = re.findall(r'[\w\.-]+@[\w]+', text)
-        link_list = re.findall(r'https?://\S+', text)
-        
-        # Only report if there is something interesting or it's a scam
-        if scam_detected or upi_list or link_list:
-            payload = {
-                "sessionId": session_id,
-                "scamDetected": scam_detected,
-                "messageCount": count,
-                "extracted_upi": upi_list,
-                "extracted_links": link_list
-            }
-            # TIMEOUT=1 is critical. Do not wait longer than 1 second.
-            requests.post(GUVI_CALLBACK_URL, json=payload, timeout=1)
-    except Exception:
-        # If anything fails (timeout, network error), we ignore it safely.
-        pass
+# --- HUMAN TOUCH (TYPOS) ---
+def humanize_text(text):
+    # 30% chance to swap letters to look like a real human typing fast
+    if random.random() < 0.3 and len(text) > 5:
+        chars = list(text)
+        idx = random.randint(0, len(chars) - 2)
+        chars[idx], chars[idx+1] = chars[idx+1], chars[idx]
+        return "".join(chars)
+    return text
 
-# --- MAIN LOGIC ---
-async def process(request: Request, background_tasks: BackgroundTasks, x_api_key: str | None):
-    # 1. API Key Check
+# --- MAIN PROCESSOR ---
+async def process(request: Request, x_api_key: str | None):
+    # 1. API Key Validation
     if x_api_key and x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
-    # 2. Robust Body Parsing (Fixes "Invalid Request Body")
+    # 2. Crash-Proof JSON Parsing
     try:
         body_bytes = await request.body()
         if not body_bytes:
@@ -85,7 +68,7 @@ async def process(request: Request, background_tasks: BackgroundTasks, x_api_key
     except Exception:
         data = {}
 
-    # 3. Safe Data Access
+    # 3. Data Extraction
     session_id = data.get("sessionId", "tester-session")
     raw_message = data.get("message", {})
     
@@ -95,28 +78,34 @@ async def process(request: Request, background_tasks: BackgroundTasks, x_api_key
     else:
         text = str(raw_message).lower()
 
-    # 4. Session Tracking
     if session_id not in sessions:
         sessions[session_id] = {"count": 0}
+
     sessions[session_id]["count"] += 1
     count = sessions[session_id]["count"]
 
-    # 5. Scam Logic
+    # 4. Smart Logic (Regex)
     scam = bool(re.search(SCAM_REGEX, text))
 
+    # 5. Reply Strategy
     if scam:
-        if count < 3:
+        if "otp" in text:
+            # Special reply for OTPs
+            reply = "I see a code but I cannot read it clearly. Is it 5 digits?"
+        elif "link" in text or "http" in text:
+            # Special reply for Links
+            reply = "I clicked the blue text but it says Page Not Found."
+        elif count < 3:
             reply = random.choice(CONFUSED_REPLIES)
         elif count < 6:
             reply = random.choice(HELPER_REPLIES)
         else:
             reply = random.choice(EXIT_REPLIES)
+        
+        # Add realistic typos
+        reply = humanize_text(reply)
     else:
         reply = "Okay."
-
-    # 6. Background Task (The "Requests" part)
-    # We add this to the queue. It runs AFTER we return the response.
-    background_tasks.add_task(report_background, session_id, count, scam, text)
 
     return {
         "status": "success",
@@ -125,7 +114,7 @@ async def process(request: Request, background_tasks: BackgroundTasks, x_api_key
         "reply": reply
     }
 
-# --- ROUTES ---
+# --- HANDLERS ---
 @app.get("/")
 async def root_get():
     return safe_success()
@@ -135,9 +124,9 @@ async def honeypot_get():
     return safe_success()
 
 @app.post("/")
-async def root_post(request: Request, background_tasks: BackgroundTasks, x_api_key: str | None = Header(None)):
-    return await process(request, background_tasks, x_api_key)
+async def root_post(request: Request, x_api_key: str | None = Header(None)):
+    return await process(request, x_api_key)
 
 @app.post("/honeypot")
-async def honeypot_post(request: Request, background_tasks: BackgroundTasks, x_api_key: str | None = Header(None)):
-    return await process(request, background_tasks, x_api_key)
+async def honeypot_post(request: Request, x_api_key: str | None = Header(None)):
+    return await process(request, x_api_key)
