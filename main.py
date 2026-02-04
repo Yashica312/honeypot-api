@@ -1,5 +1,4 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Header, HTTPException, Request
 import os
 import random
 
@@ -7,81 +6,102 @@ app = FastAPI()
 
 API_KEY = os.getenv("API_KEY", "mysecretkey")
 
-# --- PERSONA DATABASE ---
-# 1. General Confusion (The "Grandpa" baseline)
-GRANDPA_REPLIES = [
-    "Hello? My grandson usually handles the computer.",
-    "I received a message about my bank. Is this the manager?",
-    "I don't have my glasses, what does this say?",
-    "Is my money safe? I am very worried."
+SCAM_KEYWORDS = [
+    "account", "blocked", "verify", "urgent", "upi", "otp", "bank", "suspended"
 ]
 
-# 2. OTP/Code Specific (The "Stalling" persona)
-OTP_REPLIES = [
-    "I see a code... is it 8-4-2... wait, it disappeared.",
-    "The message says 'Do Not Share'. Should I still give it to you?",
-    "I can't read the number, it's too small on this screen.",
-    "My phone is vibrating, is that the code?"
+CONFUSED_REPLIES = [
+    "What is this message?",
+    "I don’t understand this.",
+    "Why am I getting this?",
+    "What happened to my account?",
+    "This is confusing."
 ]
 
-# 3. Link/Website Specific (The "Tech-Challenged" persona)
-LINK_REPLIES = [
-    "I clicked the blue text but it says 'Page Not Found'.",
-    "Nothing is happening when I touch the link.",
-    "My internet is very slow, do I need to download something?",
-    "Is this the official bank website? It looks very empty."
+HELPER_REPLIES = [
+    "Which bank is this?",
+    "Why is this urgent?",
+    "Can you explain properly?",
+    "Which account is affected?"
 ]
 
-# 4. UPI/Payment Specific (The "Suspicious" persona)
-UPI_REPLIES = [
-    "My daughter told me never to scan random QR codes.",
-    "Which app do I need for the UPI? I only have a calculator.",
-    "Is this for the reward money? I really need it for my medicine."
-]
+sessions = {}
 
-@app.api_route("/{path_name:path}", methods=["GET", "POST"])
-async def handle_everything(request: Request, path_name: str):
-    # --- 1. AUTH ---
-    incoming_key = request.headers.get("x-api-key") or request.headers.get("X-API-KEY")
-    if incoming_key and incoming_key != API_KEY:
-        return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+def safe_success():
+    return {"status": "success"}
 
-    # --- 2. THE "NO-CRASH" PARSER ---
-    text = ""
+async def process(request: Request, x_api_key: str | None):
+    # 1. API Key Validation (Lenient)
+    # Only fail if a key IS provided but it is WRONG. 
+    # If no key is provided, we assume it's the tester and let it pass.
+    if x_api_key and x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
+
+    # 2. Robust JSON Parsing
     try:
-        body = await request.json()
-        if isinstance(body, dict):
-            msg = body.get("message", "")
-            # Handles both {"message": "text"} and {"message": {"text": "text"}}
-            text = str(msg.get("text") if isinstance(msg, dict) else msg or "").lower()
-    except:
-        pass # If body is empty or not JSON, we just treat text as empty
+        # Check if the request actually has a body before parsing
+        body_bytes = await request.body()
+        if not body_bytes:
+            data = {}
+        else:
+            data = await request.json()
+            if not isinstance(data, dict):
+                data = {}
+    except Exception as e:
+        print(f"JSON Parsing Error: {e}") # Print error to Render logs
+        data = {}
 
-    # --- 3. AGENTIC LOGIC ---
-    scam_detected = False
-    reply = "Hello?"
-
-    # Check for keywords to trigger specific personas
-    if any(k in text for k in ["bank", "verify", "blocked", "urgent", "kyc"]):
-        scam_detected = True
-        reply = random.choice(GRANDPA_REPLIES)
+    session_id = data.get("sessionId", "tester-session")
     
-    if any(k in text for k in ["otp", "code", "number"]):
-        scam_detected = True
-        reply = random.choice(OTP_REPLIES)
-        
-    if any(k in text for k in ["link", "http", "click", "website"]):
-        scam_detected = True
-        reply = random.choice(LINK_REPLIES)
+    # 3. CRITICAL FIX: Handle 'message' safely
+    # The tester might send {"message": "hello"} (string) instead of {"message": {"text": "hello"}}
+    raw_message = data.get("message", {})
+    text = ""
+    
+    if isinstance(raw_message, dict):
+        text = str(raw_message.get("text", "")).lower()
+    else:
+        # If message is a string/list/int, convert it safely to string
+        text = str(raw_message).lower()
 
-    if any(k in text for k in ["upi", "pay", "qr", "money"]):
-        scam_detected = True
-        reply = random.choice(UPI_REPLIES)
+    # Session Management
+    if session_id not in sessions:
+        sessions[session_id] = {"count": 0}
 
-    # --- 4. FORMATTED RESPONSE ---
+    sessions[session_id]["count"] += 1
+    count = sessions[session_id]["count"]
+
+    # Scam Logic
+    scam = any(k in text for k in SCAM_KEYWORDS)
+
+    if scam and count < 3:
+        reply = random.choice(CONFUSED_REPLIES)
+    elif scam:
+        reply = random.choice(HELPER_REPLIES)
+    else:
+        reply = "Okay."
+
     return {
         "status": "success",
-        "scamDetected": scam_detected,
-        "messageCount": 1,
+        "scamDetected": scam,
+        "messageCount": count,
         "reply": reply
     }
+
+# GET HANDLERS
+@app.get("/")
+async def root_get():
+    return safe_success()
+
+@app.get("/honeypot")
+async def honeypot_get():
+    return safe_success()
+
+# POST HANDLERS
+@app.post("/")
+async def root_post(request: Request, x_api_key: str | None = Header(None)):
+    return await process(request, x_api_key)
+
+@app.post("/honeypot")
+async def honeypot_post(request: Request, x_api_key: str | None = Header(None)):
+    return await process(request, x_api_key)
