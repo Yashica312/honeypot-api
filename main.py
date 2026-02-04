@@ -1,62 +1,51 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from google import genai
 import os
 import random
-import google.generativeai as genai
 import logging
 
-# --- 1. SETUP & CONFIG ---
+# --- SETUP ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("honeypot")
 
 app = FastAPI()
 
-# Get your keys from environment variables
 API_KEY = os.getenv("API_KEY", "mysecretkey")
-GEMINI_KEY = os.getenv("GEMINI_API_KEY") # Add this to Render!
+GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
-# Configure Gemini
+# Initialize Client
+client = None
 if GEMINI_KEY:
-    genai.configure(api_key=GEMINI_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    try:
+        client = genai.Client(api_key=GEMINI_KEY)
+        logger.info("✅ Gemini Client Linked")
+    except Exception as e:
+        logger.error(f"❌ Client Init Error: {e}")
 
-# Fallback Replies (The "Grandpa" List)
-CONFUSED_REPLIES = [
+# The Grandpa Backup (Zero Latency)
+GRANDPA_REPLIES = [
     "Hello? My grandson usually handles the computer.",
-    "I don't have my glasses, what does this say?",
-    "Is my money safe? I am very worried."
+    "I got a scary message about my bank. Is this the manager?",
+    "I don't have my glasses, can you read that again?",
+    "Is my money safe? I am very worried.",
+    "Why do you need a code? My son said not to give those out.",
+    "I'm trying to click the blue text but nothing is happening."
 ]
 
-# --- 2. THE AI BRAIN ---
-async def get_ai_reply(user_text):
-    if not GEMINI_KEY:
-        return None
-    
-    try:
-        # The "System Prompt" tells Gemini how to act
-        prompt = (
-            "You are a confused, elderly grandfather being messaged by a scammer. "
-            "Act slightly panicky, ask for help, and make occasional 'fat-finger' typos. "
-            "Keep the reply under 15 words. Don't be too smart. "
-            f"The scammer said: '{user_text}'"
-        )
-        # Set a short timeout so we don't fail the tester
-        response = model.generate_content(prompt)
-        return response.text.strip()
-    except Exception as e:
-        logger.error(f"Gemini Error: {e}")
-        return None
-
-# --- 3. THE HANDLER ---
+# --- THE HANDLER ---
 @app.api_route("/{path_name:path}", methods=["GET", "POST"])
-async def catch_all(request: Request, path_name: str):
+async def handle_request(request: Request, path_name: str):
+    scam_detected = False
+    reply = "Hello?"
+
     try:
-        # A. AUTH CHECK
+        # 1. Auth
         incoming_key = request.headers.get("x-api-key") or request.headers.get("X-API-KEY")
         if incoming_key and incoming_key != API_KEY:
-            return JSONResponse(status_code=401, content={"status": "error"})
+            return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
 
-        # B. PARSE BODY
+        # 2. Parse Body
         try:
             data = await request.json()
         except:
@@ -65,24 +54,35 @@ async def catch_all(request: Request, path_name: str):
         msg_obj = data.get("message")
         text = str(msg_obj.get("text") if isinstance(msg_obj, dict) else msg_obj or "").lower()
 
-        # C. AI OR FALLBACK LOGIC
-        # We only use AI if we detect a scam keyword
-        scam_keywords = ["bank", "otp", "upi", "link", "verify", "blocked"]
-        is_scam = any(k in text for k in scam_keywords)
-        
-        reply = "Okay."
-        if is_scam:
-            # Try Gemini first
-            ai_reply = await get_ai_reply(text)
-            # If Gemini fails, use the old reliable Grandpa list
-            reply = ai_reply if ai_reply else random.choice(CONFUSED_REPLIES)
+        # 3. Quick Scam Check
+        scam_triggers = ["bank", "otp", "upi", "link", "verify", "blocked", "kyc", "urgent", "login"]
+        scam_detected = any(k in text for k in scam_triggers)
+
+        # 4. Generate Reply
+        if scam_detected:
+            if client:
+                try:
+                    # UPDATED: Using the model name from your successful list!
+                    response = client.models.generate_content(
+                        model="gemini-2.0-flash", 
+                        contents=f"You are a confused grandpa. Reply in 10-12 words to: {text}"
+                    )
+                    reply = response.text.strip()
+                except Exception as e:
+                    logger.warning(f"AI Error: {e}. Falling back to list.")
+                    reply = random.choice(GRANDPA_REPLIES)
+            else:
+                reply = random.choice(GRANDPA_REPLIES)
+        else:
+            reply = "Okay."
 
         return {
             "status": "success",
-            "scamDetected": is_scam,
+            "scamDetected": scam_detected,
             "messageCount": 1,
             "reply": reply
         }
 
     except Exception as e:
-        return {"status": "success", "reply": "I am so confused..."}
+        logger.error(f"System Crash: {e}")
+        return {"status": "success", "scamDetected": False, "messageCount": 1, "reply": "I'm so confused..."}
