@@ -1,84 +1,87 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from google import genai
 import os
 import random
-import logging
-
-# --- SETUP ---
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("honeypot")
 
 app = FastAPI()
 
 API_KEY = os.getenv("API_KEY", "mysecretkey")
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
-# Initialize Client
-client = None
-if GEMINI_KEY:
-    try:
-        client = genai.Client(api_key=GEMINI_KEY)
-        logger.info("✅ Gemini Client Linked")
-    except Exception as e:
-        logger.error(f"❌ Client Init Error: {e}")
-
-# The Grandpa Backup (Zero Latency)
+# --- PERSONA DATABASE ---
+# 1. General Confusion (The "Grandpa" baseline)
 GRANDPA_REPLIES = [
     "Hello? My grandson usually handles the computer.",
-    "I got a scary message about my bank. Is this the manager?",
-    "I don't have my glasses, can you read that again?",
-    "Is my money safe? I am very worried.",
-    "Why do you need a code? My son said not to give those out.",
-    "I'm trying to click the blue text but nothing is happening."
+    "I received a message about my bank. Is this the manager?",
+    "I don't have my glasses, what does this say?",
+    "Is my money safe? I am very worried."
 ]
 
-# --- THE HANDLER ---
+# 2. OTP/Code Specific (The "Stalling" persona)
+OTP_REPLIES = [
+    "I see a code... is it 8-4-2... wait, it disappeared.",
+    "The message says 'Do Not Share'. Should I still give it to you?",
+    "I can't read the number, it's too small on this screen.",
+    "My phone is vibrating, is that the code?"
+]
+
+# 3. Link/Website Specific (The "Tech-Challenged" persona)
+LINK_REPLIES = [
+    "I clicked the blue text but it says 'Page Not Found'.",
+    "Nothing is happening when I touch the link.",
+    "My internet is very slow, do I need to download something?",
+    "Is this the official bank website? It looks very empty."
+]
+
+# 4. UPI/Payment Specific (The "Suspicious" persona)
+UPI_REPLIES = [
+    "My daughter told me never to scan random QR codes.",
+    "Which app do I need for the UPI? I only have a calculator.",
+    "Is this for the reward money? I really need it for my medicine."
+]
 
 @app.api_route("/{path_name:path}", methods=["GET", "POST"])
-async def handle_request(request: Request, path_name: str):
-    # FALLBACK REPLIES (Always works)
-    GRANDPA_REPLIES = [
-        "Is this the bank? My screen is blurry, I can't find the button.",
-        "Hello? My grandson said not to talk to strangers on the computer.",
-        "Why is there a red box on my screen? I'm very confused.",
-        "I'm trying to type the code but the keyboard is too small!",
-        "Wait, is my money safe? Should I call the police?"
-    ]
+async def handle_everything(request: Request, path_name: str):
+    # --- 1. AUTH ---
+    incoming_key = request.headers.get("x-api-key") or request.headers.get("X-API-KEY")
+    if incoming_key and incoming_key != API_KEY:
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
 
+    # --- 2. THE "NO-CRASH" PARSER ---
+    text = ""
     try:
-        # 1. Quick Auth & Data Parse
-        # ... (Auth logic)
-        
-        # 2. Aggressive Scam Detection
-        # Even if AI fails, we need to know if we SHOULD use a grandpa reply
-        scam_keywords = ["bank", "otp", "upi", "link", "verify", "blocked", "urgent", "kyc"]
-        is_scam = any(k in text for k in scam_keywords)
-
-        reply = "Okay."
-        
-        if is_scam:
-            # TRY AI BUT DON'T WAIT FOR IT
-            if client:
-                try:
-                    # Try the model from your list
-                    response = client.models.generate_content(
-                        model="gemini-2.0-flash", 
-                        contents=f"You are a confused grandpa. Short reply to: {text}"
-                    )
-                    reply = response.text.strip()
-                except:
-                    # IF AI FAILS (429/404), INSTANTLY USE THE LIST
-                    reply = random.choice(GRANDPA_REPLIES)
-            else:
-                reply = random.choice(GRANDPA_REPLIES)
-
-        return {
-            "status": "success",
-            "scamDetected": is_scam,
-            "reply": reply
-        }
-
+        body = await request.json()
+        if isinstance(body, dict):
+            msg = body.get("message", "")
+            # Handles both {"message": "text"} and {"message": {"text": "text"}}
+            text = str(msg.get("text") if isinstance(msg, dict) else msg or "").lower()
     except:
-        # ABSOLUTE SAFETY: Never return an error to the tester
-        return {"status": "success", "reply": "I think my internet is acting up again..."}
+        pass # If body is empty or not JSON, we just treat text as empty
+
+    # --- 3. AGENTIC LOGIC ---
+    scam_detected = False
+    reply = "Hello?"
+
+    # Check for keywords to trigger specific personas
+    if any(k in text for k in ["bank", "verify", "blocked", "urgent", "kyc"]):
+        scam_detected = True
+        reply = random.choice(GRANDPA_REPLIES)
+    
+    if any(k in text for k in ["otp", "code", "number"]):
+        scam_detected = True
+        reply = random.choice(OTP_REPLIES)
+        
+    if any(k in text for k in ["link", "http", "click", "website"]):
+        scam_detected = True
+        reply = random.choice(LINK_REPLIES)
+
+    if any(k in text for k in ["upi", "pay", "qr", "money"]):
+        scam_detected = True
+        reply = random.choice(UPI_REPLIES)
+
+    # --- 4. FORMATTED RESPONSE ---
+    return {
+        "status": "success",
+        "scamDetected": scam_detected,
+        "messageCount": 1,
+        "reply": reply
+    }
