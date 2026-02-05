@@ -6,23 +6,28 @@ app = FastAPI()
 
 API_KEY = os.getenv("API_KEY", "mysecretkey")
 
+# 1. SMARTER KEYWORDS
+# We added spaces around words like " upi " so "cupid" doesn't trigger it.
 SCAM_KEYWORDS = [
-    "account", "blocked", "verify", "urgent", "upi", "otp", "bank", "suspended"
+    "account", "blocked", "verify", "urgent", " upi ", " otp ", "bank", 
+    "suspended", "click", "link", "reward", "winner"
 ]
 
+# 2. THE GRANDPA PERSONA (Creative Replies)
 CONFUSED_REPLIES = [
-    "What is this message?",
-    "I don’t understand this.",
-    "Why am I getting this?",
-    "What happened to my account?",
-    "This is confusing."
+    "Hello? My grandson usually handles the computer.",
+    "I received a message about my bank. Is this the manager?",
+    "I don't have my glasses, what does this say?",
+    "Why is the bank texting me at this hour?",
+    "Is my money safe? I am very worried."
 ]
 
 HELPER_REPLIES = [
-    "Which bank is this?",
-    "Why is this urgent?",
-    "Can you explain properly?",
-    "Which account is affected?"
+    "Okay, I want to fix this. Which specific account is it?",
+    "My son told me never to share the OTP, but I am scared.",
+    "Do I need to come to the branch? Or can I do it here?",
+    "I am trying to find the app. Which one do I download?",
+    "Can you send the link again? My fingers are shaky."
 ]
 
 sessions = {}
@@ -31,15 +36,11 @@ def safe_success():
     return {"status": "success"}
 
 async def process(request: Request, x_api_key: str | None):
-    # 1. API Key Validation (Lenient)
-    # Only fail if a key IS provided but it is WRONG. 
-    # If no key is provided, we assume it's the tester and let it pass.
+    # --- SAFETY CHECK: Same as the working code ---
     if x_api_key and x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
-    # 2. Robust JSON Parsing
     try:
-        # Check if the request actually has a body before parsing
         body_bytes = await request.body()
         if not body_bytes:
             data = {}
@@ -47,31 +48,26 @@ async def process(request: Request, x_api_key: str | None):
             data = await request.json()
             if not isinstance(data, dict):
                 data = {}
-    except Exception as e:
-        print(f"JSON Parsing Error: {e}") # Print error to Render logs
+    except Exception:
         data = {}
 
     session_id = data.get("sessionId", "tester-session")
     
-    # 3. CRITICAL FIX: Handle 'message' safely
-    # The tester might send {"message": "hello"} (string) instead of {"message": {"text": "hello"}}
+    # Handle message safely
     raw_message = data.get("message", {})
     text = ""
-    
     if isinstance(raw_message, dict):
         text = str(raw_message.get("text", "")).lower()
     else:
-        # If message is a string/list/int, convert it safely to string
         text = str(raw_message).lower()
 
-    # Session Management
     if session_id not in sessions:
         sessions[session_id] = {"count": 0}
 
     sessions[session_id]["count"] += 1
     count = sessions[session_id]["count"]
 
-    # Scam Logic
+    # Simple logic
     scam = any(k in text for k in SCAM_KEYWORDS)
 
     if scam and count < 3:
